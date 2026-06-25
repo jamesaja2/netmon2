@@ -56,84 +56,97 @@
     </div>
 
     <script>
-        // Setup Grafik Menggunakan Chart.js
-        const ctx = document.getElementById('pingChart').getContext('2d');
-        const maxDataPoints = 30; // Jumlah titik data yang muncul di grafik
-        const pingChart = new Chart(ctx, {
-            type: 'line',
-            data: {
-                labels: [],
-                datasets: [{
-                    label: 'Ping (ms)',
-                    data: [],
-                    borderColor: '#ff9800',
-                    backgroundColor: 'rgba(255, 152, 0, 0.1)',
-                    borderWidth: 2,
-                    tension: 0.2,
-                    fill: true
-                }]
-            },
-            options: {
-                scales: {
-                    x: { grid: { color: '#333' }, ticks: { color: '#aaa' } },
-                    y: { min: 0, grid: { color: '#333' }, ticks: { color: '#aaa' } }
-                },
-                plugins: { legend: { display: false } }
-            }
-        });
+// Setup Grafik Menggunakan Chart.js
+const ctx = document.getElementById('pingChart').getContext('2d');
+const maxDataPoints = 50; // Kita perbanyak titiknya agar history terlihat panjang
+const pingChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+        labels: [],
+        datasets: [{
+            label: 'Ping (ms)',
+            data: [],
+            borderColor: '#ff9800',
+            backgroundColor: 'rgba(255, 152, 0, 0.1)',
+            borderWidth: 2,
+            tension: 0.2,
+            fill: true
+        }]
+    },
+    options: {
+        scales: {
+            x: { grid: { color: '#333' }, ticks: { color: '#aaa' } },
+            y: { min: 0, grid: { color: '#333' }, ticks: { color: '#aaa' } }
+        },
+        plugins: { legend: { display: false } }
+    }
+});
 
-        // Hubungkan WebSocket ke Server STB
-        const ws = new WebSocket(`ws://${window.location.host}`);
+// Hubungkan WebSocket ke Server STB
+const ws = new WebSocket(`ws://${window.location.host}`);
+
+ws.onmessage = (event) => {
+    const data = JSON.parse(event.data);
+    
+    if (data.type === 'PING') {
+        document.getElementById('current-ping').innerText = data.time;
         
-        ws.onmessage = (event) => {
-            const data = JSON.parse(event.data);
-            
-            if (data.type === 'PING') {
-                document.getElementById('current-ping').innerText = data.time;
-                
-                // Update Titik Grafik
-                if (pingChart.data.labels.length > maxDataPoints) {
-                    pingChart.data.labels.shift();
-                    pingChart.data.datasets[0].data.shift();
-                }
-                pingChart.data.labels.push(data.timestamp);
-                pingChart.data.datasets[0].data.push(data.time);
-                pingChart.update();
+        // Update Titik Grafik secara Realtime
+        pushDataToChart(data.timestamp, data.time);
 
-                // Jika terdeteksi putus (DOWN) atau lemot (SLOW), perbarui tabel log otomatis
-                if (data.status === 'DOWN' || data.status === 'SLOW') {
-                    fetchLogs();
-                }
-            } else if (data.type === 'SPEEDTEST') {
-                document.getElementById('current-dl').innerText = data.download;
-                document.getElementById('current-ul').innerText = data.upload;
-                fetchLogs();
-            }
-        };
-
-        // Fungsi mengambil data log dari file network_logs.json di backend
-        function fetchLogs() {
-            fetch('/api/logs')
-                .then(res => res.json())
-                .then(logs => {
-                    const tbody = document.getElementById('log-tbody');
-                    tbody.innerHTML = '';
-                    
-                    // Tampilkan log terbaru di urutan paling atas (reverse)
-                    logs.reverse().forEach(log => {
-                        let infoDetail = log.message || `Download: ${log.download} | Upload: ${log.upload} (Ping: ${log.ping}ms)`;
-                        let row = `<tr>
-                            <td>${log.timestamp}</td>
-                            <td class="type-${log.type}">${log.type}</td>
-                            <td>${infoDetail}</td>
-                        </tr>`;
-                        tbody.innerHTML += row;
-                    });
-                });
+        if (data.status === 'DOWN' || data.status === 'SLOW') {
+            fetchLogs();
         }
-
-        // Ambil log saat pertama kali web dibuka
+    } else if (data.type === 'SPEEDTEST') {
+        document.getElementById('current-dl').innerText = data.download;
+        document.getElementById('current-ul').innerText = data.upload;
         fetchLogs();
+    }
+};
+
+// Fungsi pembantu untuk memasukkan data ke grafik
+function pushDataToChart(label, value) {
+    if (pingChart.data.labels.length > maxDataPoints) {
+        pingChart.data.labels.shift();
+        pingChart.data.datasets[0].data.shift();
+    }
+    pingChart.data.labels.push(label);
+    pingChart.data.datasets[0].data.push(value);
+    pingChart.update();
+}
+
+// Fungsi mengambil data log dari file network_logs.json sekaligus mengisi grafik history
+function fetchLogs() {
+    fetch('/api/logs')
+        .then(res => res.json())
+        .then(logs => {
+            const tbody = document.getElementById('log-tbody');
+            tbody.innerHTML = '';
+            
+            // 1. Gambar ulang grafik history dari data JSON sebelum di-reverse
+            // Kita ambil maks 40 data ping terakhir yang terekam di JSON untuk grafik awal
+            const pingLogs = logs.filter(l => l.type === 'DOWN' || l.type === 'SLOW');
+            const historyData = pingLogs.slice(-40); 
+            
+            pingChart.data.labels = historyData.map(l => l.timestamp.split(' ')[1] || l.timestamp);
+            pingChart.data.datasets[0].data = historyData.map(l => l.ping_ms);
+            pingChart.update();
+
+            // 2. Tampilkan tabel log kejadian (Urutan terbaru di atas)
+            logs.reverse().forEach(log => {
+                let infoDetail = log.message || `Download: ${log.download} | Upload: ${log.upload} (Ping: ${log.ping}ms)`;
+                let row = `<tr>
+                    <td>${log.timestamp}</td>
+                    <td class="type-${log.type}">${log.type}</td>
+                    <td>${infoDetail}</td>
+                </tr>`;
+                tbody.innerHTML += row;
+            });
+        });
+}
+
+// Ambil log dan render grafik history saat pertama kali web dibuka/di-refresh
+fetchLogs();
     </script>
 </body>
 </html>
