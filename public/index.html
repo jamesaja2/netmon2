@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WiFi Monitor STB</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #121212; color: #e0e0e0; margin: 20px; }
+        .container { max-width: 900px; margin: 0 auto; }
+        .card { background: #1e1e1e; padding: 20px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
+        h2 { margin-top: 0; color: #ff9800; }
+        .flex-status { display: flex; gap: 20px; font-size: 1.2rem; }
+        .status-box { padding: 10px 20px; border-radius: 5px; background: #2a2a2a; flex: 1; text-align: center; }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        th, td { padding: 10px; text-align: left; border-bottom: 1px solid #333; }
+        th { background: #2a2a2a; color: #ff9800; }
+        .type-DOWN { color: #f44336; font-weight: bold; }
+        .type-SLOW { color: #ffeb3b; font-weight: bold; }
+        .type-SPEEDTEST { color: #00e676; }
+        .scroll-table { max-height: 350px; overflow-y: auto; display: block; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📶 WiFi Live Monitoring Server</h1>
+        
+        <div class="card flex-status">
+            <div class="status-box">Ping: <span id="current-ping">0</span> ms</div>
+            <div class="status-box">Download: <span id="current-dl">-</span> Mbps</div>
+            <div class="status-box">Upload: <span id="current-ul">-</span> Mbps</div>
+        </div>
+
+        <div class="card">
+            <h2>Grafik Latency (Realtime via WebSocket)</h2>
+            <canvas id="pingChart" height="100"></canvas>
+        </div>
+
+        <div class="card">
+            <h2>File Log Kejadian (.json)</h2>
+            <button onclick="fetchLogs()" style="padding: 6px 12px; cursor: pointer; margin-bottom: 10px; background: #ff9800; border: none; border-radius: 4px; color: #000; font-weight: bold;">Refresh Log</button>
+            <div class="scroll-table">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Waktu</th>
+                            <th>Tipe Log</th>
+                            <th>Detail Informasi</th>
+                        </tr>
+                    </thead>
+                    <tbody id="log-tbody">
+                        </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Setup Grafik Menggunakan Chart.js
+        const ctx = document.getElementById('pingChart').getContext('2d');
+        const maxDataPoints = 30; // Jumlah titik data yang muncul di grafik
+        const pingChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: 'Ping (ms)',
+                    data: [],
+                    borderColor: '#ff9800',
+                    backgroundColor: 'rgba(255, 152, 0, 0.1)',
+                    borderWidth: 2,
+                    tension: 0.2,
+                    fill: true
+                }]
+            },
+            options: {
+                scales: {
+                    x: { grid: { color: '#333' }, ticks: { color: '#aaa' } },
+                    y: { min: 0, grid: { color: '#333' }, ticks: { color: '#aaa' } }
+                },
+                plugins: { legend: { display: false } }
+            }
+        });
+
+        // Hubungkan WebSocket ke Server STB
+        const ws = new WebSocket(`ws://${window.location.host}`);
+        
+        ws.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            
+            if (data.type === 'PING') {
+                document.getElementById('current-ping').innerText = data.time;
+                
+                // Update Titik Grafik
+                if (pingChart.data.labels.length > maxDataPoints) {
+                    pingChart.data.labels.shift();
+                    pingChart.data.datasets[0].data.shift();
+                }
+                pingChart.data.labels.push(data.timestamp);
+                pingChart.data.datasets[0].data.push(data.time);
+                pingChart.update();
+
+                // Jika terdeteksi putus (DOWN) atau lemot (SLOW), perbarui tabel log otomatis
+                if (data.status === 'DOWN' || data.status === 'SLOW') {
+                    fetchLogs();
+                }
+            } else if (data.type === 'SPEEDTEST') {
+                document.getElementById('current-dl').innerText = data.download;
+                document.getElementById('current-ul').innerText = data.upload;
+                fetchLogs();
+            }
+        };
+
+        // Fungsi mengambil data log dari file network_logs.json di backend
+        function fetchLogs() {
+            fetch('/api/logs')
+                .then(res => res.json())
+                .then(logs => {
+                    const tbody = document.getElementById('log-tbody');
+                    tbody.innerHTML = '';
+                    
+                    // Tampilkan log terbaru di urutan paling atas (reverse)
+                    logs.reverse().forEach(log => {
+                        let infoDetail = log.message || `Download: ${log.download} | Upload: ${log.upload} (Ping: ${log.ping}ms)`;
+                        let row = `<tr>
+                            <td>${log.timestamp}</td>
+                            <td class="type-${log.type}">${log.type}</td>
+                            <td>${infoDetail}</td>
+                        </tr>`;
+                        tbody.innerHTML += row;
+                    });
+                });
+        }
+
+        // Ambil log saat pertama kali web dibuka
+        fetchLogs();
+    </script>
+</body>
+</html>
