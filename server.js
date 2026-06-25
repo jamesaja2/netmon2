@@ -51,6 +51,8 @@ function logEvent(type, details) {
     });
 }
 
+let logCounter = 0;
+
 // Loop Ping (Berjalan setiap 2 detik)
 setInterval(async () => {
     let res = await ping.promise.probe(TARGET_HOST, { timeout: 2 });
@@ -63,6 +65,13 @@ setInterval(async () => {
     } else if (time > LATENCY_THRESHOLD) {
         status = "SLOW";
         logEvent("SLOW", { ping_ms: time, message: `Ping Spike / Lemot (> ${LATENCY_THRESHOLD}ms)` });
+    } else {
+        // Biar file JSON ga bengkak, simpan ping normal tiap 5x putaran (sekitar 10 detik sekali)
+        logCounter++;
+        if (logCounter >= 5) {
+            logEvent("NORMAL", { ping_ms: time, message: "Koneksi Normal" });
+            logCounter = 0;
+        }
     }
 
     // Kirim data realtime ke Web via WebSocket
@@ -71,6 +80,7 @@ setInterval(async () => {
         if (client.readyState === WebSocket.OPEN) client.send(dataPayload);
     });
 }, 2000);
+
 
 // Loop Speedtest Berkala (Setiap 1 menit)
 setInterval(() => {
